@@ -7,7 +7,7 @@ from prometheus_client import start_http_server
 import signaltrade_trading.models  # noqa: F401
 from signaltrade_trading.config import settings
 from signaltrade_trading.sqs import SqsQueueAdapter
-from signaltrade_trading.trading_commands import execute_strategy_signal
+from signaltrade_trading.trading_commands import execute_manual_liquidation, execute_strategy_signal
 from signaltrade_trading.reconciliation_events import apply_position_reconciled
 from signaltrade_trading.recovery import recover_stale_paper_executions
 
@@ -35,6 +35,12 @@ def main():
                     updated = apply_position_reconciled(message.envelope)
                     queue.acknowledge(message)
                     logger.info("Position reconciliation processed: updated=%s", updated)
+                    continue
+                if message.envelope.message_type == "ManualLiquidationRequested":
+                    result = execute_manual_liquidation(message.envelope)
+                    queue.acknowledge(message)
+                    logger.info("Manual liquidation processed: request_id=%s executions=%s",
+                                result.execution_request_id, result.execution_count)
                     continue
                 result = execute_strategy_signal(message.envelope)
                 queue.acknowledge(message)

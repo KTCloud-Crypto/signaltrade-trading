@@ -17,7 +17,7 @@ from signaltrade_trading.live_order import (
     execute_market_buy,
     execute_market_sell,
 )
-from signaltrade_trading.models.execution import StrategyExecution
+from signaltrade_trading.models.execution import StrategyExecution, TradingExecutionRequest
 from signaltrade_trading.models.trade import Trade
 from signaltrade_trading.models.external import (strategy_signal_table, strategy_table,
     supported_market_table, user_strategy_table, user_table)
@@ -27,7 +27,7 @@ from signaltrade_trading.preflight import PreflightResult, validate_buy, validat
 
 @dataclass(frozen=True, slots=True)
 class ExecutionTarget:
-    signal_id: int
+    signal_id: int | None
     user_strategy_id: int
     user_id: int
     action: str
@@ -38,6 +38,7 @@ class ExecutionTarget:
     paused: bool
     mode: str
     live_trading_enabled: bool
+    execution_request_id: int | None = None
 
 
 def load_targets(signal_id: int, target_user_id: int | None = None,
@@ -131,7 +132,9 @@ def _execute_live_target(target: ExecutionTarget) -> bool:
         ).one()
         preflight, credentials = _prepare_live(target, db)
         execution = StrategyExecution(
-            signal_id=target.signal_id, user_strategy_id=target.user_strategy_id,
+            signal_id=target.signal_id,
+            execution_request_id=target.execution_request_id,
+            user_strategy_id=target.user_strategy_id,
             user_id=target.user_id, mode="live", action=target.action,
             market=target.market,
             status="ready" if preflight.ready else "validation_failed",
@@ -184,6 +187,7 @@ def execute_target(target: ExecutionTarget) -> bool:
         return _execute_live_target(target)
     with SessionLocal() as db:
         execution = StrategyExecution(signal_id=target.signal_id,
+            execution_request_id=target.execution_request_id,
             user_strategy_id=target.user_strategy_id, user_id=target.user_id,
             mode="simulated", action=target.action, market=target.market,
             status="simulated_pending", price=target.price)
@@ -205,3 +209,32 @@ def dispatch_signal(signal_id: int, target_user_id: int | None = None,
                     target_mode: str | None = None) -> int:
     return sum(execute_target(target) for target in load_targets(
         signal_id, target_user_id, target_mode))
+
+
+def load_manual_target(request_id: int) -> ExecutionTarget | None:
+    request = TradingExecutionRequest
+    us, u = user_strategy_table, user_table
+    statement = (select(request, us.c.invest_ratio, us.c.allocated_amount,
+                        us.c.paused, u.c.live_trading_enabled)
+        .select_from(request.__table__.join(us, us.c.id == request.user_strategy_id)
+                     .join(u, u.c.id == request.user_id))
+        .where(request.id == request_id, us.c.user_id == request.user_id))
+    with SessionLocal() as db:
+        row = db.execute(statement).first()
+    if row is None:
+        return None
+    execution_request = row.TradingExecutionRequest
+    return ExecutionTarget(
+        signal_id=None, user_strategy_id=execution_request.user_strategy_id,
+        user_id=execution_request.user_id, action=execution_request.action,
+        market=execution_request.market, price=execution_request.reference_price,
+        invest_ratio=row.invest_ratio, allocated_amount=row.allocated_amount,
+        paused=row.paused, mode=execution_request.mode,
+        live_trading_enabled=row.live_trading_enabled,
+        execution_request_id=execution_request.id,
+    )
+
+
+def dispatch_manual_request(request_id: int) -> int:
+    target = load_manual_target(request_id)
+    return int(target is not None and execute_target(target))

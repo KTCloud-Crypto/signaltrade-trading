@@ -23,3 +23,7 @@ python -m venv .venv
 실전 거래 자격증명은 로컬 DB에서 직접 읽지 않고 Identity의 내부 API에서 조회합니다.
 두 런타임에 동일한 `INTERNAL_SERVICE_TOKEN`을 주입해야 하며 반환된 키는 메모리에서만
 주문 사전검증과 주문 요청에 사용합니다.
+
+수동 청산 API는 `TradingExecutionRequest`와 `ManualLiquidationRequested` Outbox를
+같은 트랜잭션에 저장합니다. Worker는 이 명령을 소비해 자동매매와 같은 모의·실전
+주문 안전장치를 거치며, `Idempotency-Key`로 API 재요청을 중복 제거할 수 있습니다.

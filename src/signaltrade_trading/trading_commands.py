@@ -1,12 +1,13 @@
 from dataclasses import dataclass
-from signaltrade_trading.dispatcher import dispatch_signal
+from signaltrade_trading.dispatcher import dispatch_manual_request, dispatch_signal
 from signaltrade_trading.message_contract import MessageEnvelope
 
 
 @dataclass(frozen=True, slots=True)
 class TradingCommandResult:
-    signal_id: int
+    signal_id: int | None
     execution_count: int
+    execution_request_id: int | None = None
 
 
 def execute_strategy_signal(envelope: MessageEnvelope) -> TradingCommandResult:
@@ -22,3 +23,18 @@ def execute_strategy_signal(envelope: MessageEnvelope) -> TradingCommandResult:
     if mode not in {None, "simulated", "live"}:
         raise ValueError("target_mode must be simulated, live, or null")
     return TradingCommandResult(signal_id, dispatch_signal(signal_id, user_id, mode))
+
+
+def execute_manual_liquidation(envelope: MessageEnvelope) -> TradingCommandResult:
+    if envelope.message_type != "ManualLiquidationRequested":
+        raise ValueError(f"unsupported trading message type: {envelope.message_type}")
+    request_id = envelope.payload.get("execution_request_id")
+    if not isinstance(request_id, int) or request_id <= 0:
+        raise ValueError(
+            "ManualLiquidationRequested.execution_request_id must be a positive integer"
+        )
+    return TradingCommandResult(
+        signal_id=None,
+        execution_count=dispatch_manual_request(request_id),
+        execution_request_id=request_id,
+    )
