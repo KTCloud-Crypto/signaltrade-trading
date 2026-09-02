@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     sqs_trading_visibility_timeout_seconds: int = 300
     metrics_enabled: bool = True
     trading_metrics_port: int = 9102
+    stale_execution_seconds: int = 120
 
 
 settings = Settings()
