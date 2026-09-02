@@ -7,13 +7,18 @@ name = "signaltrade-trading"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+  "boto3==1.40.21",
   "fastapi==0.116.1",
   "httpx==0.28.1",
+  "prometheus-client==0.22.1",
   "psycopg2-binary==2.9.10",
   "pydantic-settings==2.10.1",
   "SQLAlchemy==2.0.43",
   "uvicorn[standard]==0.35.0",
 ]
+
+[project.scripts]
+signaltrade-trading-worker = "signaltrade_trading.worker:run"
 
 [project.optional-dependencies]
 dev = ["pytest==8.4.2"]
