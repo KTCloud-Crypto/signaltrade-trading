@@ -1,4 +1,5 @@
 from decimal import Decimal
+import hmac
 from typing import Literal
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from signaltrade_trading.database import get_db
+from signaltrade_trading.config import settings
 from signaltrade_trading.identity_client import AuthenticatedUser, get_current_user
 from signaltrade_trading.manual_commands import enqueue_manual_liquidation
 from signaltrade_trading.market_client import MarketPriceUnavailable, get_current_price
@@ -18,6 +20,16 @@ from signaltrade_trading.models.external import (
 )
 
 router = APIRouter(prefix="/strategies", tags=["Manual Trading"])
+internal_router = APIRouter(prefix="/internal/trading", tags=["Trading Internal"])
+
+
+def require_internal_service_token(
+    token: str | None = Header(default=None, alias="X-SignalTrade-Service-Token"),
+) -> None:
+    if not settings.internal_service_token or not token or not hmac.compare_digest(
+        token, settings.internal_service_token
+    ):
+        raise HTTPException(status_code=401, detail="유효한 내부 서비스 토큰이 필요합니다.")
 
 
 class ManualLiquidationOut(BaseModel):
@@ -94,6 +106,30 @@ def _out(request: TradingExecutionRequest) -> ManualLiquidationOut:
         execution_request_id=request.id, user_strategy_id=request.user_strategy_id,
         mode=request.mode, market=request.market, reference_price=request.reference_price,
     )
+
+
+@internal_router.post("/users/{user_id}/manual-liquidations",
+                      dependencies=[Depends(require_internal_service_token)])
+async def internal_manual_liquidations(user_id: int, subscription_ids: list[int],
+                                       db: Session = Depends(get_db)) -> dict:
+    us, sm = user_strategy_table, supported_market_table
+    rows = db.execute(select(us.c.id, us.c.mode, sm.c.code.label("market")).select_from(
+        us.join(sm, sm.c.id == us.c.market_id)).where(
+        us.c.user_id == user_id, us.c.id.in_(subscription_ids))).all()
+    user = AuthenticatedUser(id=user_id, username="internal", nickname="internal",
+                             bot_enabled=True, execution_mode="simulated",
+                             live_trading_enabled=True)
+    requested, failures = 0, []
+    found = {row.id for row in rows}
+    failures.extend(str(item) for item in subscription_ids if item not in found)
+    for row in rows:
+        try:
+            await _create_request(db, user, row, row.mode,
+                                  f"telegram-close:{user_id}:{row.id}:{uuid4()}")
+            requested += 1
+        except HTTPException:
+            failures.append(str(row.id))
+    return {"requested": requested, "failures": failures}
 
 
 @router.post("/liquidate-all", response_model=list[ManualLiquidationOut])

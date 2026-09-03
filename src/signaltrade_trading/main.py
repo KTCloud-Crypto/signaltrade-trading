@@ -3,11 +3,12 @@ from sqlalchemy import text
 
 from signaltrade_trading.database import SessionLocal
 from signaltrade_trading.api_paper import router as paper_router
-from signaltrade_trading.api_manual import router as manual_router
+from signaltrade_trading.api_manual import internal_router as internal_manual_router, router as manual_router
 
 app = FastAPI(title="SignalTrade Trading API", version="1.0.0")
 app.include_router(paper_router)
 app.include_router(manual_router)
+app.include_router(internal_manual_router)
 
 
 @app.get("/health")
