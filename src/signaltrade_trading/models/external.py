@@ -6,7 +6,8 @@ from signaltrade_trading.database import Base
 
 user_table = Table("user", Base.metadata, Column("id", Integer, primary_key=True),
                    Column("bot_enabled", Boolean, nullable=False),
-                   Column("live_trading_enabled", Boolean, nullable=False))
+                   Column("live_trading_enabled", Boolean, nullable=False),
+                   Column("telegram_chat_id", String(64), nullable=True))
 strategy_table = Table("strategy", Base.metadata, Column("id", Integer, primary_key=True),
                        Column("name", String(100), nullable=False),
                        Column("enabled", Boolean, nullable=False))

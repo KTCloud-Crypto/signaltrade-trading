@@ -23,6 +23,7 @@ from signaltrade_trading.models.external import (strategy_signal_table, strategy
     supported_market_table, user_strategy_table, user_table)
 from signaltrade_trading.paper_execution import execute_paper_order
 from signaltrade_trading.preflight import PreflightResult, validate_buy, validate_sell
+from signaltrade_trading.notification_events import enqueue_execution_notification
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,8 @@ class ExecutionTarget:
     paused: bool
     mode: str
     live_trading_enabled: bool
+    telegram_chat_id: str | None
+    strategy_name: str
     execution_request_id: int | None = None
 
 
@@ -48,7 +51,8 @@ def load_targets(signal_id: int, target_user_id: int | None = None,
     statement = (select(s.c.id, us.c.id.label("subscription_id"), us.c.user_id,
                         s.c.action, s.c.market, s.c.close_price, us.c.invest_ratio,
                         us.c.allocated_amount, us.c.paused, us.c.mode,
-                        u.c.live_trading_enabled)
+                        u.c.live_trading_enabled, u.c.telegram_chat_id,
+                        st.c.name.label("strategy_name"))
         .select_from(s.join(st, st.c.id == s.c.strategy_id)
                      .join(us, us.c.strategy_id == st.c.id)
                      .join(m, m.c.id == us.c.market_id)
@@ -64,7 +68,8 @@ def load_targets(signal_id: int, target_user_id: int | None = None,
         return [ExecutionTarget(row.id, row.subscription_id, row.user_id, row.action,
                                 row.market, row.close_price, row.invest_ratio,
                                 row.allocated_amount, row.paused, row.mode,
-                                row.live_trading_enabled)
+                                row.live_trading_enabled, row.telegram_chat_id,
+                                row.strategy_name)
                 for row in db.execute(statement).all()]
 
 
@@ -176,6 +181,10 @@ def _execute_live_target(target: ExecutionTarget) -> bool:
                                   (execution.paid_fee or 0)) if target.action == "sell" else None)
                 if allocation:
                     enqueue_allocation_changed(db, execution, allocation)
+        enqueue_execution_notification(
+            db, execution=execution, chat_id=target.telegram_chat_id,
+            strategy_name=target.strategy_name,
+        )
         db.commit()
         return True
 
@@ -198,6 +207,10 @@ def execute_target(target: ExecutionTarget) -> bool:
                                              target.allocated_amount)
             if allocation is not None:
                 enqueue_allocation_changed(db, execution, allocation)
+            enqueue_execution_notification(
+                db, execution=execution, chat_id=target.telegram_chat_id,
+                strategy_name=target.strategy_name,
+            )
             db.commit()
             return True
         except IntegrityError:
@@ -213,10 +226,12 @@ def dispatch_signal(signal_id: int, target_user_id: int | None = None,
 
 def load_manual_target(request_id: int) -> ExecutionTarget | None:
     request = TradingExecutionRequest
-    us, u = user_strategy_table, user_table
+    us, st, u = user_strategy_table, strategy_table, user_table
     statement = (select(request, us.c.invest_ratio, us.c.allocated_amount,
-                        us.c.paused, u.c.live_trading_enabled)
+                        us.c.paused, u.c.live_trading_enabled, u.c.telegram_chat_id,
+                        st.c.name.label("strategy_name"))
         .select_from(request.__table__.join(us, us.c.id == request.user_strategy_id)
+                     .join(st, st.c.id == us.c.strategy_id)
                      .join(u, u.c.id == request.user_id))
         .where(request.id == request_id, us.c.user_id == request.user_id))
     with SessionLocal() as db:
@@ -231,6 +246,7 @@ def load_manual_target(request_id: int) -> ExecutionTarget | None:
         invest_ratio=row.invest_ratio, allocated_amount=row.allocated_amount,
         paused=row.paused, mode=execution_request.mode,
         live_trading_enabled=row.live_trading_enabled,
+        telegram_chat_id=row.telegram_chat_id, strategy_name=row.strategy_name,
         execution_request_id=execution_request.id,
     )
 
