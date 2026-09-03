@@ -1,7 +1,22 @@
-from fastapi.testclient import TestClient
+from datetime import datetime
 
+from fastapi.testclient import TestClient
+from sqlalchemy import insert
+
+from signaltrade_trading.database import SessionLocal
 from signaltrade_trading.identity_client import AuthenticatedUser, get_current_user
 from signaltrade_trading.main import app
+from signaltrade_trading.models import (
+    PaperAccount,
+    StrategyExecution,
+    strategy_runtime_table,
+    strategy_signal_table,
+    strategy_table,
+    supported_market_table,
+    user_strategy_table,
+    user_table,
+)
+from signaltrade_trading.paper_accounts import account_value
 
 
 USER = AuthenticatedUser(id=1, username="paper", nickname="paper",
@@ -33,3 +48,36 @@ def test_paper_account_rejects_withdrawal_above_cash():
     finally:
         app.dependency_overrides.clear()
     assert response.status_code == 409
+
+
+def test_paper_account_equity_includes_open_position_mark_value():
+    with SessionLocal() as db:
+        db.execute(insert(user_table), {"id": 1, "bot_enabled": False,
+                                       "live_trading_enabled": False, "telegram_chat_id": None})
+        db.execute(insert(strategy_table), {"id": 1, "name": "SMA", "enabled": True})
+        db.execute(insert(supported_market_table), {"id": 1, "code": "KRW-BTC"})
+        db.execute(insert(user_strategy_table), {
+            "id": 1, "user_id": 1, "strategy_id": 1, "market_id": 1,
+            "mode": "simulated", "invest_ratio": 0.5, "allocated_amount": 1_000_000,
+            "timeframe_minutes": 1, "enabled": True, "paused": False,
+        })
+        db.execute(insert(strategy_signal_table), {
+            "id": 1, "strategy_id": 1, "market": "KRW-BTC", "timeframe_minutes": 1,
+            "action": "buy", "source": "engine", "close_price": 100,
+        })
+        db.execute(insert(strategy_runtime_table), {
+            "id": 1, "strategy_id": 1, "market": "KRW-BTC", "timeframe_minutes": 1,
+            "close_price": 110, "metrics": {}, "evaluated_at": datetime(2026, 9, 3),
+        })
+        db.add(PaperAccount(user_id=1, cash_balance=1_000_000, net_deposit=2_000_000))
+        db.add(StrategyExecution(
+            signal_id=1, user_strategy_id=1, user_id=1, mode="simulated", action="buy",
+            market="KRW-BTC", status="simulated_success", price=100,
+            executed_volume=10, average_price=100,
+        ))
+        db.commit()
+
+        value = account_value(db, 1)
+        assert value.holdings_value == 1100
+        assert value.total_equity == 1_001_100
+        assert value.profit_loss == -998_900

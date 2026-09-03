@@ -3,6 +3,12 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from signaltrade_trading.models import (
+    StrategyExecution,
+    strategy_runtime_table,
+    supported_market_table,
+    user_strategy_table,
+)
 from signaltrade_trading.models.paper import PaperAccount, PaperLedger
 
 
@@ -33,7 +39,49 @@ def get_or_create_paper_account(db: Session, user_id: int, *, lock: bool = False
 
 def account_value(db: Session, user_id: int) -> PaperAccountValue:
     account = get_or_create_paper_account(db, user_id)
-    return PaperAccountValue(Decimal(account.cash_balance), Decimal(account.net_deposit))
+    subscriptions = db.execute(
+        user_strategy_table.select().where(
+            user_strategy_table.c.user_id == user_id,
+            user_strategy_table.c.mode == "simulated",
+        )
+    ).mappings().all()
+    holdings = Decimal("0")
+    for subscription in subscriptions:
+        executions = db.query(StrategyExecution).filter_by(
+            user_strategy_id=subscription["id"], status="simulated_success"
+        ).order_by(StrategyExecution.created_at, StrategyExecution.id).all()
+        volume = Decimal("0")
+        average_buy_price = Decimal("0")
+        for execution in executions:
+            filled = Decimal(str(execution.executed_volume or 0))
+            if execution.action == "buy":
+                volume += filled
+                average_buy_price = Decimal(str(execution.average_price or execution.price or 0))
+            else:
+                volume -= filled
+                if volume <= 0:
+                    volume = Decimal("0")
+                    average_buy_price = Decimal("0")
+        if volume <= 0:
+            continue
+        market = db.execute(
+            supported_market_table.select().with_only_columns(supported_market_table.c.code).where(
+                supported_market_table.c.id == subscription["market_id"]
+            )
+        ).scalar_one()
+        mark_price = db.execute(
+            strategy_runtime_table.select().with_only_columns(strategy_runtime_table.c.close_price).where(
+                strategy_runtime_table.c.strategy_id == subscription["strategy_id"],
+                strategy_runtime_table.c.market == market,
+                strategy_runtime_table.c.timeframe_minutes == subscription["timeframe_minutes"],
+            )
+        ).scalar_one_or_none()
+        holdings += volume * Decimal(str(mark_price or average_buy_price))
+    return PaperAccountValue(
+        Decimal(account.cash_balance),
+        Decimal(account.net_deposit),
+        holdings,
+    )
 
 
 def adjust_net_deposit(db: Session, user_id: int, target: Decimal) -> PaperAccount:

@@ -1,6 +1,6 @@
 """Read/FK-only mappings for tables owned by Identity and Strategy."""
 
-from sqlalchemy import Boolean, Column, Float, Integer, String, Table
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, JSON, String, Table
 
 from signaltrade_trading.database import Base
 
@@ -27,4 +27,10 @@ strategy_signal_table = Table(
     Column("strategy_id", Integer, nullable=False), Column("market", String(20), nullable=False),
     Column("timeframe_minutes", Integer, nullable=False), Column("action", String(8), nullable=False),
     Column("source", String(16), nullable=False), Column("close_price", Float, nullable=False)
+)
+strategy_runtime_table = Table(
+    "strategy_runtime", Base.metadata, Column("id", Integer, primary_key=True),
+    Column("strategy_id", Integer, nullable=False), Column("market", String(20), nullable=False),
+    Column("timeframe_minutes", Integer, nullable=False), Column("close_price", Float, nullable=False),
+    Column("metrics", JSON, nullable=False), Column("evaluated_at", DateTime, nullable=False),
 )
