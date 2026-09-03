@@ -4,4 +4,10 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
 .DS_Store
