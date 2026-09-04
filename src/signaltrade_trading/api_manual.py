@@ -111,6 +111,8 @@ def _out(request: TradingExecutionRequest) -> ManualLiquidationOut:
 @internal_router.post("/users/{user_id}/manual-liquidations",
                       dependencies=[Depends(require_internal_service_token)])
 async def internal_manual_liquidations(user_id: int, subscription_ids: list[int],
+                                       idempotency_key: str = Header(
+                                           alias="Idempotency-Key", min_length=8, max_length=128),
                                        db: Session = Depends(get_db)) -> dict:
     us, sm = user_strategy_table, supported_market_table
     rows = db.execute(select(us.c.id, us.c.mode, sm.c.code.label("market")).select_from(
@@ -125,7 +127,7 @@ async def internal_manual_liquidations(user_id: int, subscription_ids: list[int]
     for row in rows:
         try:
             await _create_request(db, user, row, row.mode,
-                                  f"telegram-close:{user_id}:{row.id}:{uuid4()}")
+                                  f"internal-close:{user_id}:{idempotency_key}:{row.id}")
             requested += 1
         except HTTPException:
             failures.append(str(row.id))

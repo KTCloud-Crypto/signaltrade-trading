@@ -84,15 +84,16 @@ def account_value(db: Session, user_id: int) -> PaperAccountValue:
     )
 
 
-def adjust_net_deposit(db: Session, user_id: int, target: Decimal) -> PaperAccount:
+def adjust_net_deposit(db: Session, user_id: int, target: Decimal,
+                       protected_cash: Decimal = Decimal("0")) -> PaperAccount:
     if target < 0:
         raise ValueError("모의 투자금은 0원 이상이어야 합니다.")
     account = get_or_create_paper_account(db, user_id, lock=True)
     current = Decimal(account.net_deposit)
     difference = (target - current).quantize(Decimal("0.01"))
     cash = Decimal(account.cash_balance)
-    if difference < 0 and -difference > cash:
-        raise ValueError("출금하려는 금액이 모의계좌의 가용 현금보다 큽니다.")
+    if difference < 0 and cash + difference < protected_cash:
+        raise ValueError("전략에 예약된 주문 금액과 수수료를 제외한 현금만 출금할 수 있습니다.")
     if difference != 0:
         account.net_deposit = target
         account.cash_balance = cash + difference
@@ -103,15 +104,16 @@ def adjust_net_deposit(db: Session, user_id: int, target: Decimal) -> PaperAccou
     return account
 
 
-def apply_cash_adjustment(db: Session, user_id: int, amount: Decimal, action: str) -> PaperAccount:
+def apply_cash_adjustment(db: Session, user_id: int, amount: Decimal, action: str,
+                          protected_cash: Decimal = Decimal("0")) -> PaperAccount:
     if amount <= 0:
         raise ValueError("입출금 금액은 0원보다 커야 합니다.")
     if action not in {"deposit", "withdraw"}:
         raise ValueError("지원하지 않는 입출금 구분입니다.")
     account = get_or_create_paper_account(db, user_id, lock=True)
     cash, net = Decimal(account.cash_balance), Decimal(account.net_deposit)
-    if action == "withdraw" and amount > cash:
-        raise ValueError("출금하려는 금액이 모의계좌의 가용 현금보다 큽니다.")
+    if action == "withdraw" and cash - amount < protected_cash:
+        raise ValueError("전략에 예약된 주문 금액과 수수료를 제외한 현금만 출금할 수 있습니다.")
     if action == "withdraw" and amount > net:
         raise ValueError("출금하려는 금액이 현재 순입금액보다 큽니다.")
     signed = amount if action == "deposit" else -amount

@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import insert
 
 from signaltrade_trading.database import SessionLocal
+from signaltrade_trading.config import settings
 from signaltrade_trading.identity_client import AuthenticatedUser, get_current_user
 from signaltrade_trading.main import app
 from signaltrade_trading.message_contract import MessageEnvelope
@@ -79,3 +80,23 @@ def test_manual_liquidation_command_executes_paper_sell_once(monkeypatch):
             execution_request_id=request_id).one()
     assert execution.status == "simulated_success"
     assert execution.action == "sell"
+
+
+def test_internal_manual_liquidation_retry_reuses_request(monkeypatch):
+    _seed_position()
+    monkeypatch.setattr(settings, "internal_service_token", "runtime-token")
+    async def fake_price(_market): return 51000.0
+    monkeypatch.setattr("signaltrade_trading.api_manual.get_current_price", fake_price)
+    client = TestClient(app)
+    headers = {"X-SignalTrade-Service-Token": "runtime-token",
+               "Idempotency-Key": "telegram-update:99"}
+    first = client.post("/internal/trading/users/1/manual-liquidations",
+                        headers=headers, json=[30])
+    second = client.post("/internal/trading/users/1/manual-liquidations",
+                         headers=headers, json=[30])
+    assert first.status_code == 200
+    assert second.json() == first.json() == {"requested": 1, "failures": []}
+    with SessionLocal() as db:
+        assert db.query(TradingExecutionRequest).count() == 1
+        assert db.query(MessageOutbox).filter_by(
+            message_type="ManualLiquidationRequested").count() == 1

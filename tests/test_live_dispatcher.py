@@ -66,7 +66,10 @@ def test_live_dispatcher_places_mocked_order_and_persists_trade(monkeypatch):
 def test_live_dispatcher_blocks_when_same_action_is_pending(monkeypatch):
     _seed_live(enabled=True)
     with SessionLocal() as db:
-        db.add(StrategyExecution(signal_id=None, execution_request_id=90,
+        db.execute(insert(strategy_signal_table), [{"id": 41, "strategy_id": 10,
+            "market": "KRW-BTC", "timeframe_minutes": 10, "action": "buy",
+            "source": "engine", "close_price": 49000.0}])
+        db.add(StrategyExecution(signal_id=41,
             user_strategy_id=30, user_id=1, mode="live", action="buy",
             market="KRW-BTC", status="submitted", price=49000.0))
         db.commit()
