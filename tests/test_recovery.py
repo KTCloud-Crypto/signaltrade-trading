@@ -6,6 +6,7 @@ from sqlalchemy import insert
 
 from signaltrade_trading.models import (
     MessageOutbox,
+    strategy_signal_table,
     strategy_table,
     supported_market_table,
     user_strategy_table,
@@ -26,6 +27,17 @@ def test_live_recovery_detects_possible_external_fill():
 
 def test_stale_paper_execution_fails_safely():
     with SessionLocal() as db:
+        db.execute(insert(user_table), [{"id": 1, "bot_enabled": True,
+            "live_trading_enabled": False, "telegram_chat_id": None}])
+        db.execute(insert(strategy_table), [{"id": 1, "name": "SMA", "enabled": True}])
+        db.execute(insert(supported_market_table), [{"id": 1, "code": "KRW-BTC"}])
+        db.execute(insert(user_strategy_table), [{"id": 1, "user_id": 1,
+            "strategy_id": 1, "market_id": 1, "mode": "simulated",
+            "invest_ratio": 0.1, "timeframe_minutes": 10,
+            "enabled": True, "paused": False}])
+        db.execute(insert(strategy_signal_table), [{"id": 1, "strategy_id": 1,
+            "market": "KRW-BTC", "timeframe_minutes": 10, "action": "buy",
+            "source": "engine", "close_price": 100}])
         row = StrategyExecution(signal_id=1, user_strategy_id=1, user_id=1,
             mode="simulated", action="buy", market="KRW-BTC", price=100,
             status="simulated_pending", created_at=datetime.utcnow() - timedelta(minutes=5))
@@ -45,6 +57,9 @@ def test_stale_live_execution_with_balance_change_becomes_uncertain(monkeypatch)
             "strategy_id": 10, "market_id": 20, "mode": "live", "invest_ratio": 0.1,
             "allocated_amount": 10000, "timeframe_minutes": 10, "enabled": True,
             "paused": False}])
+        db.execute(insert(strategy_signal_table), [{"id": 1, "strategy_id": 10,
+            "market": "KRW-BTC", "timeframe_minutes": 10, "action": "buy",
+            "source": "engine", "close_price": 100}])
         row = StrategyExecution(signal_id=1, user_strategy_id=30, user_id=1,
             mode="live", action="buy", market="KRW-BTC", price=100,
             status="ready", created_at=datetime.utcnow() - timedelta(minutes=5))

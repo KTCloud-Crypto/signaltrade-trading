@@ -24,7 +24,15 @@ USER = AuthenticatedUser(id=1, username="paper", nickname="paper",
                          live_trading_enabled=False)
 
 
+def _seed_paper_user():
+    with SessionLocal() as db:
+        db.execute(insert(user_table), {"id": 1, "bot_enabled": True,
+            "live_trading_enabled": False, "telegram_chat_id": None})
+        db.commit()
+
+
 def test_paper_account_deposit_withdraw_and_ledger():
+    _seed_paper_user()
     app.dependency_overrides[get_current_user] = lambda: USER
     client = TestClient(app)
     try:
@@ -42,6 +50,7 @@ def test_paper_account_deposit_withdraw_and_ledger():
 
 
 def test_paper_account_rejects_withdrawal_above_cash():
+    _seed_paper_user()
     app.dependency_overrides[get_current_user] = lambda: USER
     try:
         response = TestClient(app).post("/paper-account/withdraw", json={"amount": 1})
