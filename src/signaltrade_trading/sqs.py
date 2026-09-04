@@ -18,11 +18,12 @@ class SqsQueueAdapter:
 
     @classmethod
     def from_settings(cls):
-        options = {"region_name": settings.aws_region,
-                   "aws_access_key_id": settings.aws_access_key_id,
-                   "aws_secret_access_key": settings.aws_secret_access_key}
+        options = {"region_name": settings.aws_region}
         if settings.sqs_endpoint_url:
             options["endpoint_url"] = settings.sqs_endpoint_url
+            if settings.aws_access_key_id and settings.aws_secret_access_key:
+                options["aws_access_key_id"] = settings.aws_access_key_id
+                options["aws_secret_access_key"] = settings.aws_secret_access_key
         return cls(boto3.client("sqs", **options), settings.sqs_trading_command_queue_name)
 
     def _url(self):
