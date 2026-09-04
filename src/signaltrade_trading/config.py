@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://signaltrade:signaltrade-local@localhost:5432/signaltrade"
     identity_service_url: str = "http://identity-api:8000"
     strategy_service_url: str = "http://strategy-api:8000"
+    portfolio_service_url: str = "http://portfolio-api:8000"
     identity_service_timeout_seconds: float = 5.0
     internal_service_token: str = ""
     aws_region: str = "ap-northeast-2"
@@ -18,6 +19,8 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
     trading_metrics_port: int = 9102
     stale_execution_seconds: int = 120
+    order_reconciliation_seconds: int = 10
+    execution_recovery_seconds: int = 30
 
 
 settings = Settings()

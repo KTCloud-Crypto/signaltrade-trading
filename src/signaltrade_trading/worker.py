@@ -9,7 +9,11 @@ from signaltrade_trading.config import settings
 from signaltrade_trading.sqs import SqsQueueAdapter
 from signaltrade_trading.trading_commands import execute_manual_liquidation, execute_strategy_signal
 from signaltrade_trading.reconciliation_events import apply_position_reconciled
-from signaltrade_trading.recovery import recover_stale_paper_executions
+from signaltrade_trading.recovery import (
+    recover_stale_live_executions,
+    recover_stale_paper_executions,
+)
+from signaltrade_trading.order_reconciliation import reconcile_pending_orders
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +27,26 @@ def main():
     queue = SqsQueueAdapter.from_settings()
     logger.info("Trading worker started")
     next_recovery = 0.0
+    next_reconciliation = 0.0
     while not stop.is_set():
         try:
+            now = time.monotonic()
+            if now >= next_reconciliation:
+                settled = reconcile_pending_orders()
+                if settled:
+                    logger.info("Pending live orders settled: count=%s", settled)
+                next_reconciliation = now + max(1, settings.order_reconciliation_seconds)
             if time.monotonic() >= next_recovery:
-                recovered = recover_stale_paper_executions()
-                if recovered:
-                    logger.warning("Stale paper executions recovered: count=%s", recovered)
-                next_recovery = time.monotonic() + 30
+                paper_recovered = recover_stale_paper_executions()
+                live_recovered, uncertain = recover_stale_live_executions()
+                if paper_recovered or live_recovered:
+                    logger.warning(
+                        "Stale executions recovered: paper=%s live=%s uncertain=%s",
+                        paper_recovered,
+                        live_recovered,
+                        uncertain,
+                    )
+                next_recovery = time.monotonic() + max(1, settings.execution_recovery_seconds)
             for message in queue.receive():
                 if message.envelope.message_type == "PositionReconciled":
                     updated = apply_position_reconciled(message.envelope)

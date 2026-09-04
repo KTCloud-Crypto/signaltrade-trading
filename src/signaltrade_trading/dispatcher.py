@@ -93,7 +93,7 @@ def _prepare_live(
         StrategyExecution.user_strategy_id == target.user_strategy_id,
         StrategyExecution.action == target.action,
         StrategyExecution.mode == "live",
-        StrategyExecution.status.in_({"ready", "submitted", "partially_filled"}),
+        StrategyExecution.status.in_({"ready", "submitted", "partially_filled", "uncertain"}),
     ).first()
     if pending is not None:
         return PreflightResult(False, None, "이미 같은 방향의 주문이 진행 중입니다."), None
