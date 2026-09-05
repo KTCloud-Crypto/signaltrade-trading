@@ -80,3 +80,19 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
       - uses: docker/build-push-action@v6
         with: {context: ., push: true, tags: "832496385575.dkr.ecr.us-east-1.amazonaws.com/signaltrade/trading:${{ github.sha }}"}
+      - name: Request staging deployment
+        env:
+          GITOPS_DISPATCH_TOKEN: ${{ secrets.GITOPS_DISPATCH_TOKEN }}
+        run: |
+          if [[ -z "$GITOPS_DISPATCH_TOKEN" ]]; then
+            echo "::warning::GITOPS_DISPATCH_TOKEN is not configured; image was published but not promoted."
+            exit 0
+          fi
+          jq -n --arg service "trading" --arg tag "${{ github.sha }}" \
+            '{event_type:"promote-staging-image",client_payload:{service:$service,tag:$tag}}' \
+            | curl --fail-with-body --request POST \
+                --header "Authorization: Bearer $GITOPS_DISPATCH_TOKEN" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                https://api.github.com/repos/KTCloud-Crypto/signaltrade-gitops/dispatches \
+                --data-binary @-
