@@ -5,6 +5,8 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -68,18 +70,32 @@ jobs:
         run: pytest -q
 
   publish-staging-image:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    if: github.event_name == 'release' && github.event.action == 'published'
     needs: [test-and-build, postgres-integration]
     runs-on: ubuntu-latest
     environment: staging
     permissions: {contents: read, id-token: write}
     steps:
       - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Verify release commit belongs to main
+        id: release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          git fetch origin main
+          image_sha="$(git rev-list -n 1 "$RELEASE_TAG")"
+          git merge-base --is-ancestor "$image_sha" origin/main || {
+            echo "Release tag must point to a commit contained in main." >&2
+            exit 1
+          }
+          echo "image_sha=$image_sha" >> "$GITHUB_OUTPUT"
       - uses: aws-actions/configure-aws-credentials@v4
         with: {role-to-assume: "arn:aws:iam::832496385575:role/signaltrade-staging-github-trading-ecr", aws-region: us-east-1}
       - uses: aws-actions/amazon-ecr-login@v2
       - uses: docker/build-push-action@v6
-        with: {context: ., push: true, tags: "832496385575.dkr.ecr.us-east-1.amazonaws.com/signaltrade/trading:${{ github.sha }}"}
+        with: {context: ., push: true, tags: "832496385575.dkr.ecr.us-east-1.amazonaws.com/signaltrade/trading:${{ steps.release.outputs.image_sha }}"}
       - name: Request staging deployment
         env:
           GITOPS_DISPATCH_TOKEN: ${{ secrets.GITOPS_DISPATCH_TOKEN }}
@@ -88,7 +104,7 @@ jobs:
             echo "::warning::GITOPS_DISPATCH_TOKEN is not configured; image was published but not promoted."
             exit 0
           fi
-          jq -n --arg service "trading" --arg tag "${{ github.sha }}" \
+          jq -n --arg service "trading" --arg tag "${{ steps.release.outputs.image_sha }}" \
             '{event_type:"promote-staging-image",client_payload:{service:$service,tag:$tag}}' \
             | curl --fail-with-body --request POST \
                 --header "Authorization: Bearer $GITOPS_DISPATCH_TOKEN" \
