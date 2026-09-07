@@ -1,7 +1,7 @@
 from sqlalchemy import insert
 
 from signaltrade_trading.database import SessionLocal
-from signaltrade_trading.dispatcher import dispatch_signal
+from signaltrade_trading.dispatcher import dispatch_signal, load_targets
 from signaltrade_trading.identity_client import ExchangeCredentials
 from signaltrade_trading.live_order import LiveOrderResult
 from signaltrade_trading.models import (
@@ -16,9 +16,9 @@ from signaltrade_trading.models import (
 from signaltrade_trading.preflight import PreflightResult
 
 
-def _seed_live(*, enabled: bool):
+def _seed_live(*, enabled: bool, bot_enabled: bool = True):
     with SessionLocal() as db:
-        db.execute(insert(user_table), [{"id": 1, "bot_enabled": True,
+        db.execute(insert(user_table), [{"id": 1, "bot_enabled": bot_enabled,
                                         "live_trading_enabled": enabled}])
         db.execute(insert(strategy_table), [{"id": 10, "name": "SMA", "enabled": True}])
         db.execute(insert(supported_market_table), [{"id": 20, "code": "KRW-BTC"}])
@@ -30,6 +30,14 @@ def _seed_live(*, enabled: bool):
             "market": "KRW-BTC", "timeframe_minutes": 10, "action": "buy",
             "source": "engine", "close_price": 50000.0}])
         db.commit()
+
+
+def test_live_dispatcher_ignores_legacy_bot_enabled_flag():
+    _seed_live(enabled=True, bot_enabled=False)
+
+    targets = load_targets(40)
+
+    assert [(target.user_id, target.user_strategy_id) for target in targets] == [(1, 30)]
 
 
 def test_live_dispatcher_fails_closed_when_live_trading_is_disabled(monkeypatch):
