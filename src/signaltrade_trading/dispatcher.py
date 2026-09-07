@@ -58,7 +58,6 @@ def load_targets(signal_id: int, target_user_id: int | None = None,
                      .join(m, m.c.id == us.c.market_id)
                      .join(u, u.c.id == us.c.user_id))
         .where(s.c.id == signal_id, st.c.enabled.is_(True), us.c.enabled.is_(True),
-               u.c.bot_enabled.is_(True),
                us.c.timeframe_minutes == s.c.timeframe_minutes, m.c.code == s.c.market))
     if target_user_id is not None:
         statement = statement.where(us.c.user_id == target_user_id)
