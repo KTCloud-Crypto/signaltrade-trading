@@ -14,6 +14,7 @@ from signaltrade_trading.recovery import (
     recover_stale_paper_executions,
 )
 from signaltrade_trading.order_reconciliation import reconcile_pending_orders
+from signaltrade_trading.telemetry import observe_worker_task
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +33,15 @@ def main():
         try:
             now = time.monotonic()
             if now >= next_reconciliation:
-                settled = reconcile_pending_orders()
+                with observe_worker_task("order_reconciliation"):
+                    settled = reconcile_pending_orders()
                 if settled:
                     logger.info("Pending live orders settled: count=%s", settled)
                 next_reconciliation = now + max(1, settings.order_reconciliation_seconds)
             if time.monotonic() >= next_recovery:
-                paper_recovered = recover_stale_paper_executions()
-                live_recovered, uncertain = recover_stale_live_executions()
+                with observe_worker_task("execution_recovery"):
+                    paper_recovered = recover_stale_paper_executions()
+                    live_recovered, uncertain = recover_stale_live_executions()
                 if paper_recovered or live_recovered:
                     logger.warning(
                         "Stale executions recovered: paper=%s live=%s uncertain=%s",
