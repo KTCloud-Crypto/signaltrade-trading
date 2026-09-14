@@ -52,6 +52,11 @@ def instrument_db_pool(engine) -> None:
     for state, callback in metrics.items():
         if callable(callback):
             DB_POOL_CONNECTIONS.labels(state).set_function(callback)
+    max_overflow = getattr(pool, "_max_overflow", None)
+    if isinstance(max_overflow, int):
+        DB_POOL_CONNECTIONS.labels("capacity").set_function(
+            lambda: pool.size() + max(max_overflow, 0)
+        )
 
 
 @contextmanager
