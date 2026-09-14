@@ -8,6 +8,8 @@ from collections.abc import Callable
 
 import pyupbit
 
+from signaltrade_trading.telemetry import observe_external_call
+
 ORDER_RETRY_COUNT = 1
 DUPLICATE_CHECK_WINDOW_SECONDS = 10
 
@@ -49,7 +51,8 @@ def normalize_order_response(order_uuid: str, order: dict) -> LiveOrderResult:
 
 def _recent(upbit, market: str, side: str):
     try:
-        rows = upbit.get_order(market, state="done")
+        with observe_external_call("upbit", "get_recent_orders"):
+            rows = upbit.get_order(market, state="done")
     except Exception:
         return None
     now = datetime.now(timezone.utc)
@@ -69,7 +72,9 @@ def _submit(upbit, market: str, side: str, submit: Callable[[], object]) -> Live
     last = None
     for attempt in range(ORDER_RETRY_COUNT + 1):
         try:
-            response = submit()
+            operation = "buy_market_order" if side == "bid" else "sell_market_order"
+            with observe_external_call("upbit", operation):
+                response = submit()
         except Exception:
             response = None
         if isinstance(response, dict) and response.get("uuid"):
@@ -88,7 +93,8 @@ def _resolve(upbit, response: dict) -> LiveOrderResult:
     order_uuid = str(response["uuid"]); order = response
     for _ in range(5):
         try:
-            checked = upbit.get_order(order_uuid)
+            with observe_external_call("upbit", "get_order"):
+                checked = upbit.get_order(order_uuid)
         except Exception:
             break
         if isinstance(checked, dict):
@@ -111,7 +117,8 @@ def execute_market_sell(*, access_key: str, secret_key: str, market: str, volume
 
 def fetch_order_result(*, access_key: str, secret_key: str, order_uuid: str):
     try:
-        response = pyupbit.Upbit(access_key, secret_key).get_order(order_uuid)
+        with observe_external_call("upbit", "get_order"):
+            response = pyupbit.Upbit(access_key, secret_key).get_order(order_uuid)
     except Exception:
         return None
     return normalize_order_response(order_uuid, response) if isinstance(response, dict) else None

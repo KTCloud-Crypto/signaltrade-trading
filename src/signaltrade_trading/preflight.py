@@ -4,6 +4,8 @@ from decimal import Decimal, ROUND_DOWN
 
 import pyupbit
 
+from signaltrade_trading.telemetry import observe_external_call
+
 MIN_KRW_ORDER = Decimal("5000")
 DEFAULT_BUY_FEE_RATE = Decimal("0.0005")
 BUY_ORDER_RESERVE_KRW = Decimal("1")
@@ -21,7 +23,8 @@ def available_balances(access_key: str, secret_key: str) -> dict[str, Decimal]:
     last_error = None
     for attempt in range(3):
         try:
-            response = pyupbit.Upbit(access_key, secret_key).get_balances()
+            with observe_external_call("upbit", "get_balances"):
+                response = pyupbit.Upbit(access_key, secret_key).get_balances()
             if not isinstance(response, list):
                 raise ValueError("invalid Upbit balance response")
             return {row["currency"]: Decimal(str(row.get("balance") or "0"))
@@ -49,7 +52,8 @@ def validate_buy(*, access_key: str, secret_key: str, market: str,
     budget = (Decimal(str(allocated_amount)) if allocated_amount is not None
               else cash * Decimal(str(invest_ratio)))
     try:
-        chance = pyupbit.Upbit(access_key, secret_key).get_chance(market)
+        with observe_external_call("upbit", "get_order_chance"):
+            chance = pyupbit.Upbit(access_key, secret_key).get_chance(market)
         fee = Decimal(str(chance["bid_fee"])) if isinstance(chance, dict) else DEFAULT_BUY_FEE_RATE
     except Exception:
         fee = DEFAULT_BUY_FEE_RATE
