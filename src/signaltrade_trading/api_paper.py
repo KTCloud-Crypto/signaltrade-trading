@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 from signaltrade_trading.database import get_db
 from signaltrade_trading.identity_client import AuthenticatedUser, get_current_user
 from signaltrade_trading.models.paper import PaperAccount, PaperLedger
-from signaltrade_trading.paper_accounts import account_value, adjust_net_deposit, apply_cash_adjustment
+from signaltrade_trading.paper_accounts import (
+    PaperAccountValue,
+    account_value,
+    adjust_net_deposit,
+    apply_cash_adjustment,
+)
 from signaltrade_trading.paper_reporting import (
     available_for_order, cash_required_for_reservations, realized_profit_by_execution,
     reserved_amount,
@@ -16,8 +21,12 @@ from signaltrade_trading.schemas import PaperAccountAdjustmentIn, PaperAccountCa
 router = APIRouter(prefix="/paper-account", tags=["Paper Trading"])
 
 
-def _account_out(db: Session, user_id: int) -> PaperAccountOut:
-    value = account_value(db, user_id)
+def _account_out(
+    db: Session,
+    user_id: int,
+    value: PaperAccountValue | None = None,
+) -> PaperAccountOut:
+    value = value or account_value(db, user_id)
     return_rate = float(value.profit_loss / value.net_deposit * 100) if value.net_deposit > 0 else None
     reserved = reserved_amount(db, user_id)
     available = available_for_order(value.cash_balance, reserved)
@@ -30,8 +39,9 @@ def _account_out(db: Session, user_id: int) -> PaperAccountOut:
 @router.get("", response_model=PaperAccountOut)
 def read_paper_account(db: Session = Depends(get_db),
                        user: AuthenticatedUser = Depends(get_current_user)) -> PaperAccountOut:
-    account_value(db, user.id); db.commit()
-    return _account_out(db, user.id)
+    value = account_value(db, user.id)
+    db.commit()
+    return _account_out(db, user.id, value)
 
 
 @router.put("", response_model=PaperAccountOut)
