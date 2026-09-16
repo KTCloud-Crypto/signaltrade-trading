@@ -1,3 +1,4 @@
+from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -45,14 +46,56 @@ def account_value(db: Session, user_id: int) -> PaperAccountValue:
             user_strategy_table.c.mode == "simulated",
         )
     ).mappings().all()
+    if not subscriptions:
+        return PaperAccountValue(Decimal(account.cash_balance), Decimal(account.net_deposit))
+
+    subscription_ids = [subscription["id"] for subscription in subscriptions]
+    executions_by_subscription: dict[int, list[StrategyExecution]] = defaultdict(list)
+    executions = db.query(StrategyExecution).filter(
+        StrategyExecution.user_strategy_id.in_(subscription_ids),
+        StrategyExecution.status == "simulated_success",
+    ).order_by(
+        StrategyExecution.user_strategy_id,
+        StrategyExecution.created_at,
+        StrategyExecution.id,
+    ).all()
+    for execution in executions:
+        executions_by_subscription[execution.user_strategy_id].append(execution)
+
+    market_ids = {subscription["market_id"] for subscription in subscriptions}
+    markets = db.execute(
+        supported_market_table.select().with_only_columns(
+            supported_market_table.c.id,
+            supported_market_table.c.code,
+        ).where(supported_market_table.c.id.in_(market_ids))
+    ).all()
+    market_by_id = {market_id: code for market_id, code in markets}
+
+    strategy_ids = {subscription["strategy_id"] for subscription in subscriptions}
+    market_codes = set(market_by_id.values())
+    timeframes = {subscription["timeframe_minutes"] for subscription in subscriptions}
+    runtimes = db.execute(
+        strategy_runtime_table.select().with_only_columns(
+            strategy_runtime_table.c.strategy_id,
+            strategy_runtime_table.c.market,
+            strategy_runtime_table.c.timeframe_minutes,
+            strategy_runtime_table.c.close_price,
+        ).where(
+            strategy_runtime_table.c.strategy_id.in_(strategy_ids),
+            strategy_runtime_table.c.market.in_(market_codes),
+            strategy_runtime_table.c.timeframe_minutes.in_(timeframes),
+        )
+    ).all()
+    runtime_price = {
+        (strategy_id, market, timeframe): close_price
+        for strategy_id, market, timeframe, close_price in runtimes
+    }
+
     holdings = Decimal("0")
     for subscription in subscriptions:
-        executions = db.query(StrategyExecution).filter_by(
-            user_strategy_id=subscription["id"], status="simulated_success"
-        ).order_by(StrategyExecution.created_at, StrategyExecution.id).all()
         volume = Decimal("0")
         average_buy_price = Decimal("0")
-        for execution in executions:
+        for execution in executions_by_subscription[subscription["id"]]:
             filled = Decimal(str(execution.executed_volume or 0))
             if execution.action == "buy":
                 volume += filled
@@ -64,18 +107,10 @@ def account_value(db: Session, user_id: int) -> PaperAccountValue:
                     average_buy_price = Decimal("0")
         if volume <= 0:
             continue
-        market = db.execute(
-            supported_market_table.select().with_only_columns(supported_market_table.c.code).where(
-                supported_market_table.c.id == subscription["market_id"]
-            )
-        ).scalar_one()
-        mark_price = db.execute(
-            strategy_runtime_table.select().with_only_columns(strategy_runtime_table.c.close_price).where(
-                strategy_runtime_table.c.strategy_id == subscription["strategy_id"],
-                strategy_runtime_table.c.market == market,
-                strategy_runtime_table.c.timeframe_minutes == subscription["timeframe_minutes"],
-            )
-        ).scalar_one_or_none()
+        market = market_by_id[subscription["market_id"]]
+        mark_price = runtime_price.get((
+            subscription["strategy_id"], market, subscription["timeframe_minutes"],
+        ))
         holdings += volume * Decimal(str(mark_price or average_buy_price))
     return PaperAccountValue(
         Decimal(account.cash_balance),
