@@ -1,9 +1,9 @@
 from datetime import datetime
 
 from fastapi.testclient import TestClient
-from sqlalchemy import insert
+from sqlalchemy import event, insert
 
-from signaltrade_trading.database import SessionLocal
+from signaltrade_trading.database import SessionLocal, engine
 from signaltrade_trading.identity_client import AuthenticatedUser, get_current_user
 from signaltrade_trading.main import app
 from signaltrade_trading.models import (
@@ -63,13 +63,22 @@ def test_paper_account_equity_includes_open_position_mark_value():
     with SessionLocal() as db:
         db.execute(insert(user_table), {"id": 1, "bot_enabled": False,
                                        "live_trading_enabled": False, "telegram_chat_id": None})
-        db.execute(insert(strategy_table), {"id": 1, "name": "SMA", "enabled": True})
-        db.execute(insert(supported_market_table), {"id": 1, "code": "KRW-BTC"})
-        db.execute(insert(user_strategy_table), {
-            "id": 1, "user_id": 1, "strategy_id": 1, "market_id": 1,
-            "mode": "simulated", "invest_ratio": 0.5, "allocated_amount": 1_000_000,
-            "timeframe_minutes": 1, "enabled": True, "paused": False,
-        })
+        db.execute(insert(strategy_table), [
+            {"id": 1, "name": "SMA", "enabled": True},
+            {"id": 2, "name": "RSI", "enabled": True},
+        ])
+        db.execute(insert(supported_market_table), [
+            {"id": 1, "code": "KRW-BTC"},
+            {"id": 2, "code": "KRW-ETH"},
+        ])
+        db.execute(insert(user_strategy_table), [
+            {"id": 1, "user_id": 1, "strategy_id": 1, "market_id": 1,
+             "mode": "simulated", "invest_ratio": 0.5, "allocated_amount": 1_000_000,
+             "timeframe_minutes": 1, "enabled": True, "paused": False},
+            {"id": 2, "user_id": 1, "strategy_id": 2, "market_id": 2,
+             "mode": "simulated", "invest_ratio": 0.5, "allocated_amount": 1_000_000,
+             "timeframe_minutes": 5, "enabled": True, "paused": False},
+        ])
         db.execute(insert(strategy_signal_table), {
             "id": 1, "strategy_id": 1, "market": "KRW-BTC", "timeframe_minutes": 1,
             "action": "buy", "source": "engine", "close_price": 100,
@@ -78,18 +87,40 @@ def test_paper_account_equity_includes_open_position_mark_value():
             "id": 1, "strategy_id": 1, "market": "KRW-BTC", "timeframe_minutes": 1,
             "close_price": 110, "metrics": {}, "evaluated_at": datetime(2026, 9, 3),
         })
+        db.execute(insert(strategy_runtime_table), {
+            "id": 2, "strategy_id": 2, "market": "KRW-ETH", "timeframe_minutes": 5,
+            "close_price": 200, "metrics": {}, "evaluated_at": datetime(2026, 9, 3),
+        })
         db.add(PaperAccount(user_id=1, cash_balance=1_000_000, net_deposit=2_000_000))
         db.add(StrategyExecution(
             signal_id=1, user_strategy_id=1, user_id=1, mode="simulated", action="buy",
             market="KRW-BTC", status="simulated_success", price=100,
             executed_volume=10, average_price=100,
         ))
+        db.add(StrategyExecution(
+            signal_id=1, user_strategy_id=2, user_id=1, mode="simulated", action="buy",
+            market="KRW-ETH", status="simulated_success", price=180,
+            executed_volume=2, average_price=180,
+        ))
         db.commit()
 
-        value = account_value(db, 1)
-        assert value.holdings_value == 1100
-        assert value.total_equity == 1_001_100
-        assert value.profit_loss == -998_900
+        select_count = 0
+
+        def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+            nonlocal select_count
+            if statement.lstrip().upper().startswith("SELECT"):
+                select_count += 1
+
+        event.listen(engine, "before_cursor_execute", count_selects)
+        try:
+            value = account_value(db, 1)
+        finally:
+            event.remove(engine, "before_cursor_execute", count_selects)
+
+        assert select_count == 5
+        assert value.holdings_value == 1500
+        assert value.total_equity == 1_001_500
+        assert value.profit_loss == -998_500
 
 
 def test_paper_account_reserves_unspent_strategy_budget():
