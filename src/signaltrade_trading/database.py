@@ -8,7 +8,7 @@ from signaltrade_trading.telemetry import instrument_db_pool
 options = ({"connect_args": {"check_same_thread": False}, "poolclass": StaticPool}
            if settings.database_url.startswith("sqlite") else {
                "pool_size": 2,
-               "max_overflow": 1,
+               "max_overflow": 2,
                "pool_timeout": 5,
                "pool_pre_ping": True,
            })
